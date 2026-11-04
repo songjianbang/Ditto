@@ -44,6 +44,7 @@ public:
 
     long m_lID;
     CString m_Desc;
+    CString m_Tags;
     bool m_bDontAutoDelete;
     bool m_bIsGroup;
     bool m_bHasShortCut;
@@ -155,6 +156,9 @@ public:
 	CQPasteWndThread m_extraDataThread;
 	std::vector<CMainTable> m_listItems;
 
+	//Tag names shown in the last right click menu, indexed by menu id offset
+	std::vector<CString> m_menuTagNames;
+
 	std::list<CPoint> m_loadItems;
     std::list<CClipFormatQListCtrl> m_ExtraDataLoadItems;
     CF_DibTypeMap m_cf_dibCache;
@@ -202,6 +206,8 @@ public:
     void OnUpdateLinesPerRow(CCmdUI *pCmdUI, int nValue);
     void OnUpdateTransparency(CCmdUI *pCmdUI, int nValue);
 	void AddShowStarredClipsMenuItem(CMenu *pMenu);
+	void AddTagMenuItems(CMenu *pMenu, int nItem);
+	void ToggleTagOnClip(int clipId, const CString& tag);
     void SetMenuChecks(CMenu *pMenu);
     void SetSendToMenu(CMenu *pMenu, int nMenuID, int nArrayPos);
 	void SetFriendChecks(CMenu *pMenu);
@@ -517,6 +523,10 @@ public:
 	afx_msg void OnUpdateMenuFilteron(CCmdUI *pCmdUI);
 	afx_msg void OnMenuGoToEntry();
 	afx_msg void OnUpdateMenuGoToEntry(CCmdUI *pCmdUI);
+	afx_msg void OnMenuSetTags();
+	afx_msg void OnUpdateMenuSetTags(CCmdUI *pCmdUI);
+	afx_msg void OnMenuManageTags();
+	afx_msg void OnMenuTagClick(UINT nID);
 	afx_msg void OnAlwaysOnTopClicked();
 	//afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
 	afx_msg void OnSpecialpasteUppercase();

@@ -6,6 +6,7 @@
 #include "CP_Main.h"
 #include "Clip.h"
 #include "DatabaseUtilities.h"
+#include "Pinyin.h"
 #include "Crc32Dynamic.h"
 #include "sqlite\CppSQLite3.h"
 #include "..\Shared\TextConvert.h"
@@ -277,6 +278,7 @@ const CClip& CClip::operator=(const CClip &clip)
 	m_shortCut = clip.m_shortCut;
 	m_bIsGroup = clip.m_bIsGroup;
 	m_csQuickPaste = clip.m_csQuickPaste;
+	m_tags = clip.m_tags;
 	m_moveToGroupShortCut = clip.m_moveToGroupShortCut;
 	m_globalMoveToGroupShortCut = clip.m_globalMoveToGroupShortCut;
 
@@ -956,10 +958,11 @@ bool CClip::AddToMainTable()
 	{
 		m_Desc.Replace(_T("'"), _T("''"));
 		m_csQuickPaste.Replace(_T("'"), _T("''"));
+		m_tags.Replace(_T("'"), _T("''"));
 
 		CString cs;
-		cs.Format(_T("INSERT into Main (lDate, mText, lShortCut, lDontAutoDelete, CRC, bIsGroup, lParentID, QuickPasteText, clipOrder, clipGroupOrder, globalShortCut, lastPasteDate, stickyClipOrder, stickyClipGroupOrder, MoveToGroupShortCut, GlobalMoveToGroupShortCut) ")
-						_T("values(%lld, '%s', %d, %d, %d, %d, %d, '%s', %f, %f, %d, %lld, %f, %f, %d, %d);"),
+		cs.Format(_T("INSERT into Main (lDate, mText, lShortCut, lDontAutoDelete, CRC, bIsGroup, lParentID, QuickPasteText, clipOrder, clipGroupOrder, globalShortCut, lastPasteDate, stickyClipOrder, stickyClipGroupOrder, MoveToGroupShortCut, GlobalMoveToGroupShortCut, tags) ")
+						_T("values(%lld, '%s', %d, %d, %d, %d, %d, '%s', %f, %f, %d, %lld, %f, %f, %d, %d, '%s');"),
 							m_Time.GetTime(),
 							m_Desc,
 							m_shortCut,
@@ -975,7 +978,8 @@ bool CClip::AddToMainTable()
 							m_stickyClipOrder,
 							m_stickyClipGroupOrder,
 							m_moveToGroupShortCut,
-							m_globalMoveToGroupShortCut);
+							m_globalMoveToGroupShortCut,
+							m_tags);
 
 		theApp.m_db.execDML(cs);
 
@@ -998,6 +1002,7 @@ bool CClip::ModifyMainTable()
 	{
 		m_Desc.Replace(_T("'"), _T("''"));
 		m_csQuickPaste.Replace(_T("'"), _T("''"));
+		m_tags.Replace(_T("'"), _T("''"));
 
 		theApp.m_db.execDMLEx(_T("UPDATE Main SET lShortCut = %d, ")
 			_T("mText = '%s', ")
@@ -1010,7 +1015,8 @@ bool CClip::ModifyMainTable()
 			_T("stickyClipOrder = %f, ")
 			_T("stickyClipGroupOrder = %f, ")
 			_T("MoveToGroupShortCut = %d, ")
-			_T("GlobalMoveToGroupShortCut = %d ")
+			_T("GlobalMoveToGroupShortCut = %d, ")
+			_T("tags = '%s' ")
 			_T("WHERE lID = %d;"), 
 			m_shortCut, 
 			m_Desc, 
@@ -1024,6 +1030,7 @@ bool CClip::ModifyMainTable()
 			m_stickyClipGroupOrder,
 			m_moveToGroupShortCut,
 			m_globalMoveToGroupShortCut,
+			m_tags,
 			m_id);
 
 		bRet = true;
@@ -1050,6 +1057,74 @@ bool CClip::ModifyDescription()
 	CATCH_SQLITE_EXCEPTION_AND_RETURN(false)
 
 		return bRet;
+}
+
+// Saves the comma separated tag list for a clip.
+bool CClip::SaveTags(int clipId, CString tags)
+{
+	bool bRet = false;
+	try
+	{
+		tags.Replace(_T("'"), _T("''"));
+
+		theApp.m_db.execDMLEx(_T("UPDATE Main SET tags = '%s' WHERE lID = %d;"),
+			tags,
+			clipId);
+
+		bRet = true;
+	}
+	CATCH_SQLITE_EXCEPTION_AND_RETURN(false)
+
+	return bRet;
+}
+
+// Returns the comma separated tag list for a clip, empty when none set.
+CString CClip::LoadTags(int clipId)
+{
+	CString tags;
+	try
+	{
+		CppSQLite3Query q = theApp.m_db.execQueryEx(_T("SELECT tags FROM Main WHERE lID = %d"), clipId);
+		if (!q.eof())
+		{
+			tags = q.getStringField(_T("tags"));
+		}
+	}
+	CATCH_SQLITE_EXCEPTION_AND_RETURN(tags)
+
+	return tags;
+}
+
+// Remembers a tag name so it can be offered later when tagging other clips.
+void CClip::AddKnownTag(CString tag)
+{
+	try
+	{
+		CString pinyin = GetPinyinFull(tag, true);
+		CString initials = GetPinyinInitials(tag, true);
+
+		if (pinyin.IsEmpty())
+		{
+			pinyin = tag;
+		}
+
+		tag.Replace(_T("'"), _T("''"));
+		pinyin.Replace(_T("'"), _T("''"));
+		initials.Replace(_T("'"), _T("''"));
+
+		theApp.m_db.execDMLEx(_T("INSERT OR IGNORE INTO TagNames (tagText, lastUsedDate, pinyin, pinyinInitials) VALUES ('%s', %lld, '%s', '%s');"),
+			(LPCTSTR)tag,
+			CTime::GetCurrentTime().GetTime(),
+			(LPCTSTR)pinyin,
+			(LPCTSTR)initials);
+
+		theApp.m_db.execDMLEx(_T("UPDATE TagNames SET lastUsedDate = %lld, pinyin = '%s', pinyinInitials = '%s' WHERE tagText = '%s';"),
+			CTime::GetCurrentTime().GetTime(),
+			(LPCTSTR)pinyin,
+			(LPCTSTR)initials,
+			(LPCTSTR)tag);
+	}
+	CATCH_SQLITE_EXCEPTION
 }
 
 // Empties m_Formats as it saves them to the Data Table.
@@ -1574,6 +1649,7 @@ BOOL CClip::LoadMainTable(int id)
 			m_shortCut = q.getIntField(_T("lShortCut"));
 			m_bIsGroup = q.getIntField(_T("bIsGroup"));
 			m_csQuickPaste = q.getStringField(_T("QuickPasteText"));
+			m_tags = q.getStringField(_T("tags"));
 			m_clipOrder = q.getFloatField(_T("clipOrder"));
 			m_clipGroupOrder = q.getFloatField(_T("clipGroupOrder"));
 			m_globalShortCut = q.getIntField(_T("globalShortCut"));

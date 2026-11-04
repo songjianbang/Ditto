@@ -9,6 +9,9 @@
 #include "CF_UnicodeTextAggregator.h"
 #include "client.h"
 #include "ClipCompare.h"
+#include "Clip.h"
+#include "TagEditDlg.h"
+#include "TagManagerDlg.h"
 #include "CopyProperties.h"
 #include "CP_Main.h"
 #include "DimWnd.h"
@@ -268,6 +271,10 @@ BEGIN_MESSAGE_MAP(CQPasteWnd, CWndEx)
 	ON_UPDATE_COMMAND_UI(ID_MENU_FILTERON, &CQPasteWnd::OnUpdateMenuFilteron)
 	ON_COMMAND(ID_MENU_GOTOENTRY, &CQPasteWnd::OnMenuGoToEntry)
 	ON_UPDATE_COMMAND_UI(ID_MENU_GOTOENTRY, &CQPasteWnd::OnUpdateMenuGoToEntry)
+	ON_COMMAND(ID_MENU_SETTAGS, &CQPasteWnd::OnMenuSetTags)
+	ON_UPDATE_COMMAND_UI(ID_MENU_SETTAGS, &CQPasteWnd::OnUpdateMenuSetTags)
+	ON_COMMAND(ID_MENU_MANAGETAGS, &CQPasteWnd::OnMenuManageTags)
+	ON_COMMAND_RANGE(ID_TAG_MENU_BASE, ID_TAG_MENU_BASE + ID_TAG_MENU_MAX - 1, &CQPasteWnd::OnMenuTagClick)
 	ON_BN_CLICKED(ON_TOP_WARNING, OnAlwaysOnTopClicked)
 	//ON_WM_CTLCOLOR()
 	ON_COMMAND(ID_SPECIALPASTE_UPPERCASE, &CQPasteWnd::OnSpecialpasteUppercase)
@@ -1536,6 +1543,7 @@ BOOL CQPasteWnd::FillList(CString csSQLSearch)
 	CString IsDistinct = _T("");
 
 	CString sqlSearch = "";
+	CString tagsSql;
 
 	if (csSQLSearch == "")
 	{
@@ -1550,6 +1558,76 @@ BOOL CQPasteWnd::FillList(CString csSQLSearch)
 		CString quickPasteSql;
 		CFormatSQL fullTextFormat;
 		CString fullTextSql;
+
+		CFormatSQL tagsFormat;
+
+		//Tags are always searched so tag matches can be ranked ahead of content matches
+		tagsFormat.SetVariable("Main.tags");
+		tagsFormat.Parse(csSQLSearch);
+		tagsSql = tagsFormat.GetSQLString();
+
+		//Plain ascii input also matches tags through their pinyin
+		bool bAsciiWord = !csSQLSearch.IsEmpty();
+
+		for (int i = 0; i < csSQLSearch.GetLength() && bAsciiWord; i++)
+		{
+			wchar_t c = csSQLSearch[i];
+
+			if (!((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z')))
+			{
+				bAsciiWord = false;
+			}
+		}
+
+		if (bAsciiWord)
+		{
+			std::vector<CString> pinyinTags;
+
+			try
+			{
+				CppSQLite3Query q = theApp.m_db.execQueryEx(
+					_T("SELECT tagText FROM TagNames WHERE pinyin LIKE '%%%s%%' OR pinyinInitials LIKE '%%%s%%' ORDER BY lastUsedDate DESC LIMIT 20"),
+					(LPCTSTR)csSQLSearch,
+					(LPCTSTR)csSQLSearch);
+
+				while (!q.eof())
+				{
+					CString tag = q.fieldValue(0);
+					tag.Trim();
+
+					if (!tag.IsEmpty())
+					{
+						pinyinTags.push_back(tag);
+					}
+
+					q.nextRow();
+				}
+			}
+			catch (CppSQLite3Exception& e)
+			{
+				Log(StrF(_T("Failed to search tags by pinyin: %s"), e.errorMessage()));
+			}
+
+			CString pinyinSql;
+
+			for (size_t i = 0; i < pinyinTags.size(); i++)
+			{
+				CString tag = pinyinTags[i];
+				tag.Replace(_T("'"), _T("''"));
+
+				if (!pinyinSql.IsEmpty())
+				{
+					pinyinSql += _T(" OR ");
+				}
+
+				pinyinSql += _T("(Main.tags LIKE '%") + tag + _T("%')");
+			}
+
+			if (!pinyinSql.IsEmpty())
+			{
+				tagsSql = _T("(") + tagsSql + _T(" OR ") + pinyinSql + _T(")");
+			}
+		}
 
 		//If other are off then always search the description
 		if (CGetSetOptions::GetSearchDescription() ||
@@ -1635,6 +1713,18 @@ BOOL CQPasteWnd::FillList(CString csSQLSearch)
 			strFilter += fullTextSql;
 		}
 
+		if (tagsSql != _T(""))
+		{
+			if (descriptionSql != _T("") ||
+				quickPasteSql != _T("") ||
+				fullTextSql != _T(""))
+			{
+				strFilter += _T(" OR ");
+			}
+
+			strFilter += tagsSql;
+		}
+
 		strFilter += _T(")");
 
 		if (strParentFilter.IsEmpty() == FALSE)
@@ -1660,10 +1750,18 @@ BOOL CQPasteWnd::FillList(CString csSQLSearch)
 	//Format the count and select sql queries for the thread
 	countSql.Format(_T("SELECT COUNT(%s Main.lID) FROM Main %s where %s"), IsDistinct, dataJoin, strFilter);
 
+	//Clips whose tags match the search text are listed before content-only matches
+	CString tagsRankSql = _T("0");
+	if (tagsSql != _T(""))
+	{
+		tagsRankSql.Format(_T("CASE WHEN %s THEN 0 ELSE 1 END"), tagsSql);
+	}
+
 	sql.Format(_T("SELECT %s Main.lID, Main.mText, Main.lParentID, Main.lDontAutoDelete, ")
 		_T("Main.lShortCut, Main.bIsGroup, Main.QuickPasteText, Main.clipOrder, Main.clipGroupOrder, ")
-		_T("Main.stickyClipOrder, Main.stickyClipGroupOrder, Main.lDate, Main.lastPasteDate FROM Main %s ")
-		_T("where %s order by %s"), IsDistinct, dataJoin, strFilter, csSort);
+		_T("Main.stickyClipOrder, Main.stickyClipGroupOrder, Main.lDate, Main.lastPasteDate, Main.tags, ")
+		_T("%s AS tagsRank FROM Main %s ")
+		_T("where %s order by tagsRank ASC, %s"), IsDistinct, tagsRankSql, dataJoin, strFilter, csSort);
 
 
 	{
@@ -1737,6 +1835,8 @@ void CQPasteWnd::ShowRightClickMenu()
 		{
 			cmSubMenu->CheckMenuItem(ID_MENU_SHOWSTARREDCLIPS, MF_CHECKED);
 		}
+
+		AddTagMenuItems(cmSubMenu, nItem);
 
 		cmSubMenu->TrackPopupMenu(TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, pp.x, pp.y, this, NULL);
 	}
@@ -5738,7 +5838,15 @@ void CQPasteWnd::GetDispInfo(NMHDR* pNMHDR, LRESULT* pResult)
 					}
 
 					// pipe is the "end of symbols" marker
-					cs += "|" + CMainTableFunctions::GetDisplayText(CGetSetOptions::m_nLinesPerRow, m_listItems[pItem->iItem].m_Desc);
+					CString csDisplayText = m_listItems[pItem->iItem].m_Desc;
+					if (!m_listItems[pItem->iItem].m_Tags.IsEmpty())
+					{
+						CString csTags = m_listItems[pItem->iItem].m_Tags;
+						csTags.Replace(_T(","), _T(", "));
+						csDisplayText = _T("[") + csTags + _T("]  ") + csDisplayText;
+					}
+
+					cs += "|" + CMainTableFunctions::GetDisplayText(CGetSetOptions::m_nLinesPerRow, csDisplayText);
 
 					lstrcpyn(pItem->pszText, cs, pItem->cchTextMax);
 					pItem->pszText[pItem->cchTextMax - 1] = '\0';
@@ -6505,6 +6613,7 @@ void CQPasteWnd::FillMainTable(CMainTable& table, CppSQLite3Query& q)
 {
 	table.m_lID = q.getIntField(_T("lID"));
 	table.m_Desc = q.fieldValue(_T("mText"));
+	table.m_Tags = q.getStringField(_T("tags"));
 	table.m_bHasParent = q.getIntField(_T("lParentID")) >= 0;
 	table.m_bDontAutoDelete = q.getIntField(_T("lDontAutoDelete")) > 0;
 	table.m_bHasShortCut = q.getIntField(_T("lShortCut")) > 0;
@@ -7176,6 +7285,320 @@ void CQPasteWnd::OnUpdateMenuGoToEntry(CCmdUI* pCmdUI)
 	CString csSearch;
 	m_search.GetWindowText(csSearch);
 	pCmdUI->Enable(!csSearch.IsEmpty());
+}
+
+void CQPasteWnd::OnMenuSetTags()
+{
+	int nItem = m_lstHeader.GetCaret();
+	if (nItem < 0)
+	{
+		return;
+	}
+
+	int clipId = (int)m_lstHeader.GetItemData(nItem);
+	if (clipId < 0)
+	{
+		return;
+	}
+
+	std::vector<CString> knownTags;
+
+	try
+	{
+		CppSQLite3Query q = theApp.m_db.execQuery(_T("SELECT tagText FROM TagNames ORDER BY lastUsedDate DESC, tagText ASC LIMIT 300"));
+		while (!q.eof())
+		{
+			CString tag = q.fieldValue(0);
+			tag.Trim();
+
+			if (!tag.IsEmpty())
+			{
+				knownTags.push_back(tag);
+			}
+
+			q.nextRow();
+		}
+	}
+	catch (CppSQLite3Exception& e)
+	{
+		Log(StrF(_T("Failed to load known tags: %s"), e.errorMessage()));
+	}
+
+	//Tags already set on clips are offered as well, in case TagNames is still empty
+	try
+	{
+		CppSQLite3Query q = theApp.m_db.execQuery(_T("SELECT tags FROM Main WHERE tags IS NOT NULL AND tags <> '' LIMIT 500"));
+		while (!q.eof())
+		{
+			std::vector<CString> clipTags;
+			CTagEditDlg::SplitTags(q.fieldValue(0), clipTags);
+
+			for (size_t i = 0; i < clipTags.size(); i++)
+			{
+				if (!CTagEditDlg::ContainsTag(knownTags, clipTags[i]))
+				{
+					knownTags.push_back(clipTags[i]);
+				}
+			}
+
+			q.nextRow();
+		}
+	}
+	catch (CppSQLite3Exception& e)
+	{
+		Log(StrF(_T("Failed to load tags used on clips: %s"), e.errorMessage()));
+	}
+
+	CTagEditDlg dlg(CClip::LoadTags(clipId), knownTags, this);
+
+	if (dlg.DoModal() != IDOK)
+	{
+		return;
+	}
+
+	CString newTags = dlg.GetTags();
+
+	if (!CClip::SaveTags(clipId, newTags))
+	{
+		m_popupMsg.Show(_T("Failed to save tags"), CPoint(0, 0), true);
+		SetTimer(TIMER_ERROR_MSG, CGetSetOptions::GetErrorMsgPopupTimeout(), NULL);
+		return;
+	}
+
+	//remember the tags so they can be picked next time
+	std::vector<CString> savedTags;
+	CTagEditDlg::SplitTags(newTags, savedTags);
+
+	for (size_t i = 0; i < savedTags.size(); i++)
+	{
+		CClip::AddKnownTag(savedTags[i]);
+	}
+
+	for (size_t i = 0; i < m_listItems.size(); i++)
+	{
+		if (m_listItems[i].m_lID == clipId)
+		{
+			m_listItems[i].m_Tags = newTags;
+			break;
+		}
+	}
+
+	CString csSearch;
+	m_search.GetWindowText(csSearch);
+
+	if (csSearch.IsEmpty())
+	{
+		m_lstHeader.RefreshVisibleRows();
+	}
+	else
+	{
+		//the result order depends on the tags, so run the search again
+		FillList(csSearch);
+	}
+}
+
+void CQPasteWnd::OnUpdateMenuSetTags(CCmdUI* pCmdUI)
+{
+	bool bEnable = false;
+
+	int nItem = m_lstHeader.GetCaret();
+	if (nItem >= 0)
+	{
+		int clipId = (int)m_lstHeader.GetItemData(nItem);
+
+		for (size_t i = 0; i < m_listItems.size(); i++)
+		{
+			if (m_listItems[i].m_lID == clipId)
+			{
+				bEnable = !m_listItems[i].m_bIsGroup;
+				break;
+			}
+		}
+	}
+
+	pCmdUI->Enable(bEnable);
+}
+
+//Opens the tag manager, then reloads the list since names may have changed
+void CQPasteWnd::OnMenuManageTags()
+{
+	CTagManagerDlg dlg(this);
+	dlg.DoModal();
+
+	CString csSearch;
+	m_search.GetWindowText(csSearch);
+	FillList(csSearch);
+}
+
+//Puts the tags of the selected clip and the most recently used tags at the top of the menu
+void CQPasteWnd::AddTagMenuItems(CMenu* pMenu, int nItem)
+{
+	m_menuTagNames.clear();
+
+	if (pMenu == NULL || nItem < 0)
+	{
+		return;
+	}
+
+	int clipId = (int)m_lstHeader.GetItemData(nItem);
+	if (clipId < 0)
+	{
+		return;
+	}
+
+	//groups don't carry tags
+	for (size_t i = 0; i < m_listItems.size(); i++)
+	{
+		if (m_listItems[i].m_lID == clipId)
+		{
+			if (m_listItems[i].m_bIsGroup)
+			{
+				return;
+			}
+
+			break;
+		}
+	}
+
+	std::vector<CString> currentTags;
+	CTagEditDlg::SplitTags(CClip::LoadTags(clipId), currentTags);
+
+	std::vector<CString> recentTags;
+
+	try
+	{
+		CppSQLite3Query q = theApp.m_db.execQuery(_T("SELECT tagText FROM TagNames ORDER BY lastUsedDate DESC, tagText ASC LIMIT 100"));
+		while (!q.eof() && recentTags.size() < 10)
+		{
+			CString tag = q.fieldValue(0);
+			tag.Trim();
+
+			if (!tag.IsEmpty() &&
+				!CTagEditDlg::ContainsTag(currentTags, tag))
+			{
+				recentTags.push_back(tag);
+			}
+
+			q.nextRow();
+		}
+	}
+	catch (CppSQLite3Exception& e)
+	{
+		Log(StrF(_T("Failed to load recent tags: %s"), e.errorMessage()));
+	}
+
+	if (currentTags.empty() && recentTags.empty())
+	{
+		return;
+	}
+
+	int pos = 0;
+
+	for (size_t i = 0; i < currentTags.size() && m_menuTagNames.size() < ID_TAG_MENU_MAX; i++)
+	{
+		m_menuTagNames.push_back(currentTags[i]);
+		UINT id = (UINT)(ID_TAG_MENU_BASE + (int)m_menuTagNames.size() - 1);
+
+		pMenu->InsertMenu(pos++, MF_BYPOSITION | MF_STRING | MF_CHECKED, id, currentTags[i]);
+	}
+
+	if (!currentTags.empty())
+	{
+		pMenu->InsertMenu(pos++, MF_BYPOSITION | MF_SEPARATOR, 0U, (LPCTSTR)NULL);
+	}
+
+	for (size_t i = 0; i < recentTags.size() && m_menuTagNames.size() < ID_TAG_MENU_MAX; i++)
+	{
+		m_menuTagNames.push_back(recentTags[i]);
+		UINT id = (UINT)(ID_TAG_MENU_BASE + (int)m_menuTagNames.size() - 1);
+
+		pMenu->InsertMenu(pos++, MF_BYPOSITION | MF_STRING, id, recentTags[i]);
+	}
+
+	if (!recentTags.empty())
+	{
+		pMenu->InsertMenu(pos++, MF_BYPOSITION | MF_SEPARATOR, 0U, (LPCTSTR)NULL);
+	}
+}
+
+//Adds the tag when the clip doesn't have it yet, removes it otherwise.
+void CQPasteWnd::ToggleTagOnClip(int clipId, const CString& tag)
+{
+	if (clipId < 0 || tag.IsEmpty())
+	{
+		return;
+	}
+
+	std::vector<CString> tags;
+	CTagEditDlg::SplitTags(CClip::LoadTags(clipId), tags);
+
+	bool added = true;
+
+	for (size_t i = 0; i < tags.size(); i++)
+	{
+		if (tags[i].CompareNoCase(tag) == 0)
+		{
+			tags.erase(tags.begin() + i);
+			added = false;
+			break;
+		}
+	}
+
+	if (added)
+	{
+		tags.push_back(tag);
+	}
+
+	CString newTags = CTagEditDlg::JoinTags(tags);
+
+	if (!CClip::SaveTags(clipId, newTags))
+	{
+		return;
+	}
+
+	if (added)
+	{
+		CClip::AddKnownTag(tag);
+	}
+
+	for (size_t i = 0; i < m_listItems.size(); i++)
+	{
+		if (m_listItems[i].m_lID == clipId)
+		{
+			m_listItems[i].m_Tags = newTags;
+			break;
+		}
+	}
+
+	CString csSearch;
+	m_search.GetWindowText(csSearch);
+
+	if (csSearch.IsEmpty())
+	{
+		m_lstHeader.RefreshVisibleRows();
+	}
+	else
+	{
+		//the result order depends on the tags, so run the search again
+		FillList(csSearch);
+	}
+}
+
+void CQPasteWnd::OnMenuTagClick(UINT nID)
+{
+	int idx = (int)nID - ID_TAG_MENU_BASE;
+	if (idx < 0 || idx >= (int)m_menuTagNames.size())
+	{
+		return;
+	}
+
+	int nItem = m_lstHeader.GetCaret();
+	if (nItem < 0)
+	{
+		return;
+	}
+
+	ToggleTagOnClip((int)m_lstHeader.GetItemData(nItem), m_menuTagNames[idx]);
 }
 
 void CQPasteWnd::OnAlwaysOnTopClicked()

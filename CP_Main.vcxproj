@@ -610,6 +610,9 @@
     <ClCompile Include="src\Misc.cpp" />
     <ClCompile Include="src\ModernScrollBar.cpp" />
     <ClCompile Include="src\MoveToGroupDlg.cpp" />
+    <ClCompile Include="src\TagEditDlg.cpp" />
+    <ClCompile Include="src\TagManagerDlg.cpp" />
+    <ClCompile Include="src\Pinyin.cpp" />
     <ClCompile Include="src\MultiLanguage.cpp" />
     <ClCompile Include="src\MyDropTarget.cpp" />
     <ClCompile Include="src\NoDbFrameWnd.cpp" />
@@ -878,6 +881,9 @@
     <ClInclude Include="src\Misc.h" />
     <ClInclude Include="src\ModernScrollBar.h" />
     <ClInclude Include="src\MoveToGroupDlg.h" />
+    <ClInclude Include="src\TagEditDlg.h" />
+    <ClInclude Include="src\TagManagerDlg.h" />
+    <ClInclude Include="src\Pinyin.h" />
     <ClInclude Include="src\MultiLanguage.h" />
     <ClInclude Include="src\MyDropTarget.h" />
     <ClInclude Include="src\NoDbFrameWnd.h" />

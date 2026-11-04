@@ -8,6 +8,7 @@
 #include "ProcessPaste.h"
 #include <io.h>
 #include "Path.h"
+#include "Pinyin.h"
 #include "zlib.h"
 #include "..\Shared\TextConvert.h"
 using namespace nsPath;
@@ -471,6 +472,96 @@ BOOL ValidDB(CString csPath, BOOL bUpgrade)
 			e.errorCode();
 		}
 
+		//Tags - comma separated list of tag names on each clip
+		try
+		{
+			db.execQuery(_T("SELECT tags FROM Main"));
+		}
+		catch (CppSQLite3Exception& e)
+		{
+			//DEFAULT '' so rows written by older builds (or pre upgrade rows) read back as empty
+			db.execDML(_T("ALTER TABLE Main ADD COLUMN tags TEXT DEFAULT ''"));
+
+			e.errorCode();
+		}
+
+		//TagNames - known tag names, used to offer existing tags when editing
+		try
+		{
+			db.execQuery(_T("SELECT tagText FROM TagNames"));
+		}
+		catch (CppSQLite3Exception& e)
+		{
+			db.execDML(_T("CREATE TABLE TagNames(")
+				_T("tagText TEXT PRIMARY KEY, ")
+				_T("lastUsedDate INTEGER, ")
+				_T("pinyin TEXT DEFAULT '', ")
+				_T("pinyinInitials TEXT DEFAULT '')"));
+
+			e.errorCode();
+		}
+
+		//pinyin columns were added after the table was introduced
+		try
+		{
+			db.execQuery(_T("SELECT pinyin, pinyinInitials FROM TagNames"));
+		}
+		catch (CppSQLite3Exception& e)
+		{
+			db.execDML(_T("ALTER TABLE TagNames ADD COLUMN pinyin TEXT DEFAULT ''"));
+			db.execDML(_T("ALTER TABLE TagNames ADD COLUMN pinyinInitials TEXT DEFAULT ''"));
+
+			e.errorCode();
+		}
+
+		//fill in pinyin for tags that were stored before the columns existed
+		try
+		{
+			std::vector<CString> backfill;
+
+			{
+				CppSQLite3Query q = db.execQuery(_T("SELECT tagText FROM TagNames WHERE pinyin IS NULL OR pinyin = ''"));
+				while (!q.eof())
+				{
+					CString tag = q.fieldValue(0);
+					tag.Trim();
+
+					if (!tag.IsEmpty())
+					{
+						backfill.push_back(tag);
+					}
+
+					q.nextRow();
+				}
+			}
+
+			for (size_t i = 0; i < backfill.size(); i++)
+			{
+				CString pinyin = GetPinyinFull(backfill[i], true);
+				CString initials = GetPinyinInitials(backfill[i], true);
+
+				//keep the row from looking unprocessed when there is nothing to convert
+				if (pinyin.IsEmpty())
+				{
+					pinyin = backfill[i];
+				}
+
+				CString tag = backfill[i];
+				tag.Replace(_T("'"), _T("''"));
+				pinyin.Replace(_T("'"), _T("''"));
+				initials.Replace(_T("'"), _T("''"));
+
+				db.execDMLEx(_T("UPDATE TagNames SET pinyin = '%s', pinyinInitials = '%s' WHERE tagText = '%s'"),
+					(LPCTSTR)pinyin,
+					(LPCTSTR)initials,
+					(LPCTSTR)tag);
+			}
+		}
+		catch (CppSQLite3Exception& e)
+		{
+			e.errorCode();
+		}
+
 		db.execDML(_T("DROP INDEX IF EXISTS Main_NoGroup"));
 		db.execDML(_T("DROP INDEX IF EXISTS Main_InGroup"));
 		db.execDML(_T("DROP INDEX IF EXISTS Main_ShortCut"));
@@ -716,7 +807,14 @@ BOOL CreateDB(CString csFile)
 			_T("stickyClipOrder REAL, ")
 			_T("stickyClipGroupOrder REAL, ")
 			_T("MoveToGroupShortCut INTEGER, ")
-			_T("GlobalMoveToGroupShortCut INTEGER);"));
+			_T("GlobalMoveToGroupShortCut INTEGER, ")
+			_T("tags TEXT DEFAULT '');"));
+
+		db.execDML(_T("CREATE TABLE TagNames(")
+			_T("tagText TEXT PRIMARY KEY, ")
+			_T("lastUsedDate INTEGER, ")
+			_T("pinyin TEXT DEFAULT '', ")
+			_T("pinyinInitials TEXT DEFAULT '');"));
 
 		db.execDML(_T("CREATE TABLE Data(")
 			_T("lID INTEGER PRIMARY KEY AUTOINCREMENT, ")

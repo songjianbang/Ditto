@@ -523,6 +523,8 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Edit Clip",                   32860
         MENUITEM "New Clip",                    32867
+        MENUITEM "Set Tags...",                 ID_MENU_SETTAGS
+        MENUITEM "Manage Tags...",              ID_MENU_MANAGETAGS
         MENUITEM SEPARATOR
         MENUITEM "Properties",                  32776
         POPUP "Quick Properties"

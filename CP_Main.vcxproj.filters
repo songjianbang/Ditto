@@ -220,6 +220,15 @@
     <ClCompile Include="src\MoveToGroupDlg.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\TagEditDlg.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TagManagerDlg.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Pinyin.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\MultiLanguage.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -734,6 +743,15 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\MoveToGroupDlg.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TagEditDlg.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TagManagerDlg.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Pinyin.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\MultiLanguage.h">

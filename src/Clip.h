@@ -140,6 +140,7 @@ public:
 	BOOL m_bIsGroup;
 	DWORD m_CRC;
 	CString m_csQuickPaste;
+	CString m_tags;
 	int m_param1;
 	double m_clipOrder;
 	double m_clipGroupOrder;
@@ -175,6 +176,9 @@ public:
 	bool AddToDB(bool bCheckForDuplicates = true);
 	bool ModifyMainTable();
 	bool ModifyDescription();	
+	static bool SaveTags(int clipId, CString tags);
+	static CString LoadTags(int clipId);
+	static void AddKnownTag(CString tag);
 	void MakeLatestOrder();
 	void MakeLatestGroupOrder();
 	void MakeLastOrder();

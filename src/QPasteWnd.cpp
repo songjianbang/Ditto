@@ -1,4 +1,4 @@
-﻿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 
 #include "stdafx.h"
@@ -1752,16 +1752,20 @@ BOOL CQPasteWnd::FillList(CString csSQLSearch)
 
 	//Clips whose tags match the search text are listed before content-only matches
 	CString tagsRankSql = _T("0");
+	CString tagsOrderBy;
 	if (tagsSql != _T(""))
 	{
 		tagsRankSql.Format(_T("CASE WHEN %s THEN 0 ELSE 1 END"), tagsSql);
+		//Only rank by tags when searching, a leading constant in ORDER BY stops
+		//SQLite from using the Main_TopLevel/Main_TopLevelParentID index order
+		tagsOrderBy = _T("tagsRank ASC, ");
 	}
 
 	sql.Format(_T("SELECT %s Main.lID, Main.mText, Main.lParentID, Main.lDontAutoDelete, ")
 		_T("Main.lShortCut, Main.bIsGroup, Main.QuickPasteText, Main.clipOrder, Main.clipGroupOrder, ")
 		_T("Main.stickyClipOrder, Main.stickyClipGroupOrder, Main.lDate, Main.lastPasteDate, Main.tags, ")
 		_T("%s AS tagsRank FROM Main %s ")
-		_T("where %s order by tagsRank ASC, %s"), IsDistinct, tagsRankSql, dataJoin, strFilter, csSort);
+		_T("where %s order by %s%s"), IsDistinct, tagsRankSql, dataJoin, strFilter, tagsOrderBy, csSort);
 
 
 	{
@@ -5857,22 +5861,38 @@ void CQPasteWnd::GetDispInfo(NMHDR* pNMHDR, LRESULT* pResult)
 				{
 
 					bool addToLoadItems = true;
+					int loadStart = pItem->iItem;
+					int loadEnd = m_lstHeader.GetTopIndex() + (m_lstHeader.GetCountPerPage() * 2);
 
-					for (std::list<CPoint>::iterator it = m_loadItems.begin(); it != m_loadItems.end(); it++)
 					{
-						if (pItem->iItem >= it->x && pItem->iItem <= it->y)
+						ATL::CCritSecLock csLock(m_CritSection.m_sect);
+
+						//Skip leading rows that are already loaded, otherwise scrolling
+						//through not yet loaded rows re-queries nearly the same range for
+						//every new visible row (quadratic reload, window open stalls)
+						while (loadStart < (int)m_listItems.size() &&
+								loadStart < loadEnd &&
+								m_listItems[loadStart].m_lID != -1)
 						{
-							addToLoadItems = false;
-							break;
+							loadStart++;
 						}
-					}
 
-					if (addToLoadItems)
-					{
-						CPoint loadItem(pItem->iItem, (m_lstHeader.GetTopIndex() + (m_lstHeader.GetCountPerPage() * 2)));
+						for (std::list<CPoint>::iterator it = m_loadItems.begin(); it != m_loadItems.end(); it++)
+						{
+							if (loadStart < it->y && loadEnd > it->x)
+							{
+								addToLoadItems = false;
+								break;
+							}
+						}
 
-						//Log(StrF(_T("DrawItem index %d, add: %d"), loadItem.x, loadItem.y));
-						m_loadItems.push_back(loadItem);
+						if (addToLoadItems && loadStart < loadEnd)
+						{
+							CPoint loadItem(loadStart, loadEnd);
+
+							//Log(StrF(_T("DrawItem index %d, add: %d"), loadItem.x, loadItem.y));
+							m_loadItems.push_back(loadItem);
+						}
 					}
 
 					m_thread.FireLoadItems(false);
